@@ -1,0 +1,11 @@
+[Unit]
+Description=Greenhouse Monitor
+After=multi-user.target
+
+[Service]
+Type=idle
+ExecStart=/usr/bin/python3 /home/papes/greenhouse-monitor/greenhouse-monitor.py
+KillSignal=SIGINT
+ 
+[Install]
+WantedBy=multi-user.target

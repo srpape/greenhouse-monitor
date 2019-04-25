@@ -22,6 +22,7 @@ import os
 import logging
 import wiringpi
 import time
+import pyowm
 
 # Prepare GPIO
 wiringpi.wiringPiSetupGpio()
@@ -46,6 +47,14 @@ if config.has_option('thingspeak', 'api_key'):
 smartthings_notify_url = ''
 if config.has_option('smartthings', 'notify_url'):
     smartthings_notify_url = config.get('smartthings', 'notify_url')
+
+# openweathermap config
+owm = None
+owm_city_id = 0
+if config.has_option('openweathermap', 'api_key'):
+    openweathermap_api_key = config.get('openweathermap', 'api_key').strip()
+    owm_city_id = int(config.get('openweathermap', 'city_id'))
+    owm = pyowm.OWM(openweathermap_api_key)
 
 # epsolar config
 epsolar_client = None
@@ -96,9 +105,19 @@ class SmartThingsAPIDevice:
         self.device_type = device_type
         self.device_name = device_name
         self.__device_path = self.device_type + '/' + self.device_name
+        self.data = {}
 
     def celcius_to_fahrenheit(self, tempC):
         return tempC * 9/5.0 + 32
+
+    def fill_data(self, data):
+        data[self.device_name] = self.data
+
+    def update(self):
+        '''
+        Update the sensor data
+        '''
+        pass
 
     def notify(self):
         '''
@@ -122,72 +141,76 @@ class SmartThingsAPIDevice:
         resp.headers['Device'] = self.__device_path
         return resp
 
+    def get_body(self):
+        '''
+        Get the body we send out for response/notify
+        '''
+        body = json.dumps(self.data).encode()
+        return body
+
 class AM2302Sensor(SmartThingsAPIDevice):
     def __init__(self, device_name, pin):
         super(AM2302Sensor, self).__init__(device_type='temp_humidity', device_name=device_name)
         self.pin = pin
         self.update()
-        self.timestamp = 0
 
     def update(self):
         humidity, tempC = Adafruit_DHT.read_retry(Adafruit_DHT.AM2302, self.pin, delay_seconds=2)
         if humidity is not None:
-            self.humidity = humidity
-            self.temperature = self.celcius_to_fahrenheit(tempC)
-            self.timestamp = int(time.time() * 1000)
+            self.data['humidity'] = humidity
+            self.data['temperature'] = self.celcius_to_fahrenheit(tempC)
+            self.data['timestamp'] = int(time.time() * 1000)
 
-    def get_body(self):
-        '''
-        Get the body we send out for response/notify
-        '''
-        message = {
-            'temperature': self.temperature,
-            'humidity': self.humidity
-        }
-        body = json.dumps(message).encode()
-        return body
+class OpenWeatherMap(SmartThingsAPIDevice):
+    def __init__(self, device_name):
+        super(OpenWeatherMap, self).__init__(device_type='weather', device_name=device_name)
+        self.update()
+
+    def update(self):
+        self.observation = owm.weather_at_id(owm_city_id)
+        weather = self.observation.get_weather()
+
+        self.data['temperature'] = weather.get_temperature('fahrenheit')['temp']
+        self.data['humidity'] = weather.get_humidity()
+        self.data['wind'] = weather.get_wind()
+        self.data['sunrise'] = weather.get_sunrise_time()
+        self.data['sunset'] = weather.get_sunset_time()
+        self.data['pressure'] = weather.get_pressure()['press']
+        self.data['clouds'] = weather.get_clouds()
+        self.data['weather_icon_url'] = weather.get_weather_icon_url()
 
 class EPSolarCharger(SmartThingsAPIDevice):
     def __init__(self, device_name):
         super(EPSolarCharger, self).__init__(device_type='charger', device_name=device_name)
+        self.data['battery'] = {}
+        self.data['charging'] = {}
+        self.data['discharging'] = {}
         self.update()
 
     def update(self):
         # Get the battery temperature
         response = epsolar_client.read_input(RegisterTypeEnum.BATTERY_TEMPERATURE)
-        self.battery_temperature = self.celcius_to_fahrenheit(response.value)
+        self.data['battery']['temperature'] = self.celcius_to_fahrenheit(response.value)
 
         # Get the battery state of charge
         response = epsolar_client.read_input(RegisterTypeEnum.BATTERY_SOC)
-        self.battery_state_of_charge = response.value
-
-        # Get the equipment temperature
-        response = epsolar_client.read_input(RegisterTypeEnum.TEMPERATURE_INSIDE_EQUIPMENT)
-        self.equipment_temperature = self.celcius_to_fahrenheit(response.value)
-
-        # Get the solar watts
-        response = epsolar_client.read_input(RegisterTypeEnum.CHARGING_EQUIPMENT_INPUT_POWER)
-        self.input_power = response.value
+        self.data['battery']['state_of_charge'] = response.value
 
         # Get the battery watts
         response = epsolar_client.read_input(RegisterTypeEnum.CHARGING_EQUIPMENT_OUTPUT_POWER)
-        self.battery_power = response.value
+        self.data['battery']['output_power'] = response.value
+
+        # Get the equipment temperature
+        response = epsolar_client.read_input(RegisterTypeEnum.TEMPERATURE_INSIDE_EQUIPMENT)
+        self.data['temperature'] = self.celcius_to_fahrenheit(response.value)
+
+        # Get the solar watts
+        response = epsolar_client.read_input(RegisterTypeEnum.CHARGING_EQUIPMENT_INPUT_POWER)
+        self.data['charging']['input_power'] = response.value
 
         # Get the load watts
         response = epsolar_client.read_input(RegisterTypeEnum.DISCHARGING_EQUIPMENT_OUTPUT_POWER)
-        self.load_power = response.value
-
-    def get_body(self):
-        '''
-        Get the body we send out for response/notify
-        '''
-        message = {
-            'battery_temperature': self.battery_temperature,
-            'battery_state_of_charge': self.battery_state_of_charge,
-            'equipment_temperature': self.equipment_temperature
-        }
-        body = json.dumps(message).encode()
-        return body
+        self.data['discharging']['output_power'] = response.value
 
 class ExhaustFan(SmartThingsAPIDevice):
     def __init__(self, device_name, fwd_pin, bwd_pin, pwm_pin):
@@ -211,28 +234,28 @@ class ExhaustFan(SmartThingsAPIDevice):
         #print("Frequency:", freq)
 
         # Initialize to off
-        self.speed = 0
-        self.set_speed(0)
+        self.data['speed'] = 0
+        self.off()
 
     def fwd(self):
         wiringpi.digitalWrite(self.fwd_pin, 1)
         wiringpi.digitalWrite(self.bwd_pin, 0)
-        self.state = 'fwd'
+        self.data['state'] = 'fwd'
 
     def bwd(self):
         wiringpi.digitalWrite(self.bwd_pin, 1)
         wiringpi.digitalWrite(self.fwd_pin, 0)
-        self.state = 'bwd'
+        self.data['state'] = 'bwd'
 
     def off(self):
         wiringpi.digitalWrite(self.bwd_pin, 1)
         wiringpi.digitalWrite(self.fwd_pin, 1)
-        self.state = 'off'
+        self.data['state'] = 'off'
 
     def brake(self):
         wiringpi.digitalWrite(self.bwd_pin, 0)
         wiringpi.digitalWrite(self.fwd_pin, 0)
-        self.state = 'brake'
+        self.data['state'] = 'brake'
 
     def set_speed(self, speed):
         if speed < 10:
@@ -241,57 +264,30 @@ class ExhaustFan(SmartThingsAPIDevice):
         else:
             self.fwd()
 
-        if speed == self.speed:
+        if speed == self.data['speed']:
             return
 
-        self.speed = speed
+        self.data['speed'] = speed
         duty = int(self.range * speed / 100)
         wiringpi.pwmWrite(self.pwm_pin, duty)
-        print ("Set fan speed to", speed)
-
-    def get_body(self):
-        '''
-        Get the body we send out for response/notify
-        '''
-        message = {
-            'speed': self.speed,
-            'state': self.state
-        }
-        body = json.dumps(message).encode()
-        return body
 
 # Our sensors
 am2302 = AM2302Sensor('air', 19)
-epsolar = EPSolarCharger('solar')
-exhaust_fan = ExhaustFan('exhaust', fwd_pin=12, bwd_pin=16, pwm_pin=18)
+epsolar = EPSolarCharger('epsolar')
+exhaust_fan = ExhaustFan('exhaust_fan', fwd_pin=12, bwd_pin=16, pwm_pin=18)
+weather = OpenWeatherMap('weather')
 
-@scheduler.scheduled_job('interval', id='update_air_temp', seconds=10)
-def update_air_temp():
-    '''
-    Update the air temperature/humidity sensor regularly
-    '''
-    am2302.update()
+sensors = [am2302, epsolar, exhaust_fan, weather]
 
 @scheduler.scheduled_job('interval', id='log_to_file', seconds=5)
 def log_to_file():
     '''
     Used to log JSON for the web interface
     '''
-    epsolar.update()
     data = {}
-    data['air_humidity'] = am2302.humidity
-    data['air_temperature'] = am2302.temperature
-    data['air_temperature_timestamp'] =  am2302.timestamp
-
-    data['battery_temperature'] = epsolar.battery_temperature
-    data['battery_state_of_charge'] = epsolar.battery_state_of_charge
-    data['equipment_temperature'] = epsolar.equipment_temperature
-
-    data['load_power'] = epsolar.load_power
-    data['input_power'] = epsolar.input_power
-    data['battery_power'] = epsolar.battery_power
-
-    data['exhaust_fan_speed'] = exhaust_fan.speed
+    for sensor in sensors:
+        sensor.update()
+        sensor.fill_data(data)
 
     with open('/tmp/greenhouse_state.json', 'w') as outfile:
         json.dump(data, outfile)
@@ -307,7 +303,7 @@ cooling_state = CoolingState.WAITING
 def control_fan_speed():
     global cooling_state
 
-    temp_readings = [am2302.temperature]
+    temp_readings = [am2302.data.get('temperature', 0)]
     max_temp = max(temp_readings)
     speed = 0
 

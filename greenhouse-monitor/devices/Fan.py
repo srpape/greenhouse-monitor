@@ -2,9 +2,9 @@ import wiringpi
 
 from .Sensor import Sensor
 
-class ExhaustFan(Sensor):
+class Fan(Sensor):
     def __init__(self, device_name, device_config):
-        super(ExhaustFan, self).__init__(device_type='exhaust', device_name=device_name, device_config=device_config)
+        super(Fan, self).__init__(device_type='exhaust', device_name=device_name, device_config=device_config)
         self.fwd_pin = int(device_config['fwd_pin'])
         self.bwd_pin = int(device_config['bwd_pin'])
         self.pwm_pin = int(device_config['pwm_pin'])
@@ -16,8 +16,8 @@ class ExhaustFan(Sensor):
         wiringpi.pwmSetMode(wiringpi.PWM_MODE_MS)
 
         # Prepare PWM specs
-        self.range = 480 # 20Khz
-        self.clock = 2 # Must be at least 2
+        self.range = 240 # 20Khz
+        self.clock = 4 # Must be at least 2
         wiringpi.pwmSetClock(self.clock)
         wiringpi.pwmSetRange(self.range)
         #freq = 19200000 / self.clock / self.range

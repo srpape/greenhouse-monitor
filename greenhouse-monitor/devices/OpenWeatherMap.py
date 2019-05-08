@@ -1,4 +1,5 @@
 import pyowm
+import pyowm.exceptions
 
 from .Sensor import Sensor
 
@@ -11,7 +12,12 @@ class OpenWeatherMap(Sensor):
         self.owm = pyowm.OWM(api_key)
 
     def update(self):
-        self.observation = self.owm.weather_at_id(self.city_id)
+        try:
+            self.observation = self.owm.weather_at_id(self.city_id)
+        except pyowm.exceptions.OWMError as e:
+            print('Error updating OpenWeatherMap data:', e)
+            return
+
         weather = self.observation.get_weather()
 
         self.data['temperature'] = weather.get_temperature('fahrenheit')['temp']

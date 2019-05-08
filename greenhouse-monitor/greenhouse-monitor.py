@@ -4,6 +4,7 @@ import urllib.request
 import json
 import logging
 import wiringpi
+import time #TODO: Remove
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -55,7 +56,7 @@ class GreenhouseMonitor():
         self.run_handlers()
 
         # Start recurring jobs
-        scheduler.add_job(self.run_handlers, 'interval', seconds=10)
+        scheduler.add_job(self.run_handlers, 'interval', seconds=6, coalesce=True)
 
         # Add flask endpoints
         app = Flask(__name__)
@@ -77,7 +78,10 @@ class GreenhouseMonitor():
 
     def update_devices(self):
         for device_name in self.devices:
+            #start = time.time()
             self.devices[device_name].update()
+            #end = time.time()
+            #print("Updated device " + device_name + ": " + str(end - start) + 's')
 
     def run_handlers(self):
         self.update_devices()

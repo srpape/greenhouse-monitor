@@ -29,7 +29,7 @@ class AM2302(Sensor):
     def update(self):
         humidity, tempC = self._read()
 
-        if humidity is None:
+        if humidity is None or humidity > 100:
             '''
             Power cycle and try again
             '''
@@ -37,7 +37,7 @@ class AM2302(Sensor):
             self._reset()
             humidity, tempC = self._read()
 
-        if humidity is not None:
+        if humidity is not None and humidity <= 100:
             self.data['humidity'] = humidity
             self.data['temperature'] = self.celcius_to_fahrenheit(tempC)
             self.data['timestamp'] = int(time.time() * 1000)

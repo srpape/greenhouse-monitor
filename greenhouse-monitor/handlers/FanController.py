@@ -21,8 +21,9 @@ class FanController(Handler):
             self.primary_sensors.append(devices[s.strip()])
 
         self.backup_sensors = []
-        for s in handler_config['backup_temp_sensors'].split(','):
-            self.backup_sensors.append(devices[s.strip()])
+        if 'backup_temp_sensors' in handler_config:
+            for s in handler_config['backup_temp_sensors'].split(','):
+                self.backup_sensors.append(devices[s.strip()])
 
         # Throw exception if self.primary_sensors is empty
         if not self.primary_sensors:
@@ -47,12 +48,15 @@ class FanController(Handler):
             print("No primary or backup temperature data, ignoring...")
             return
 
+        #print("Readings:", readings)
+        #print("Max temp:", max_temp)
+
         # Actually determine the speed to set
         if self.cooling_state == CoolingState.WAITING:
             '''
             The fan is off. Wait until a point to turn on.
             '''
-            if max_temp > 82:
+            if max_temp > 83:
                 # Turn on when the greenhouse is over 80F
                 speed = 30 # Start off slow (ramp up)
                 self.cooling_state = CoolingState.COOLING
@@ -70,9 +74,6 @@ class FanController(Handler):
             elif max_temp > 80:
                 # 50% speed over 80F
                 speed = 50
-            elif max_temp > 78:
-                # 40% speed over 78F
-                speed = 40
             else:
                 # Turn off when below 78F
                 speed = 0

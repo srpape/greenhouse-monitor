@@ -1,4 +1,5 @@
 from enum import Enum
+from astral import *
 
 from .Handler import Handler
 
@@ -9,6 +10,8 @@ class CoolingState(Enum):
 class FanController(Handler):
     def __init__(self, handler_name, handler_config, devices):
         super(FanController, self).__init__(handler_name=handler_name, handler_config=handler_config, devices=devices)
+
+        self.sun = Location(info=("Ithaca", "USA", 42.511680, -76.557191, "US/Eastern", 206))
 
         self.cooling_state = CoolingState.WAITING
 
@@ -31,6 +34,12 @@ class FanController(Handler):
 
     def process(self):
         speed = 0
+
+        if self.sun.solar_elevation() < 10:
+            # Sun's getting real low...
+            self.cooling_state = CoolingState.WAITING
+            self.fan.set_speed(0)
+            return
 
         # Query primary sensors
         readings = []
@@ -65,9 +74,12 @@ class FanController(Handler):
             '''
             The fan is on. Wait until we're below our target to turn off.
             '''
-            if max_temp > 90:
-                # 70% speed over 90F
-                speed = 70
+            if max_temp > 100:
+                # 80% speed over 100F
+                speed = 80
+            elif max_temp > 90:
+                # 75% speed over 90F
+                speed = 75
             elif max_temp > 85:
                 # 60% speed over 85F
                 speed = 60

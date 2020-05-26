@@ -1,0 +1,7 @@
+adafruit-circuitpython-dht
+astral
+epsolar_tracer
+pyowm
+simple_pid
+w1thermsensor
+wiringpi

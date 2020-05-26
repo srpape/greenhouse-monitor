@@ -56,7 +56,7 @@ class GreenhouseMonitor():
         self.run_handlers()
 
         # Start recurring jobs
-        scheduler.add_job(self.run_handlers, 'interval', seconds=6, coalesce=True)
+        scheduler.add_job(self.run_handlers, 'interval', seconds=10, coalesce=True)
 
         # Add flask endpoints
         app = Flask(__name__)

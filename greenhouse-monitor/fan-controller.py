@@ -11,7 +11,7 @@ from simple_pid import PID
 from datetime import datetime
 
 class Fan:
-    def __init__(self, fwd_pin, bwd_pin, pwm_pin):
+    def __init__(self, fwd_pin, bwd_pin, pwm_pin, epsolar_reader):
         self._fwd = digitalio.DigitalInOut(fwd_pin)
         self._fwd.direction = digitalio.Direction.OUTPUT
 
@@ -27,8 +27,42 @@ class Fan:
         wiringpi.pwmSetClock(self.clock)
         wiringpi.pwmSetRange(self.range)
 
+        self._epsolar_reader = epsolar_reader
+        self._epsolar_reader.update()
+        self.max_speed = self._determine_max_fan_speed()
         self.speed = 0
         self.off()
+
+
+    def _determine_max_fan_speed(self):
+        """ Based on the current power state, determine the maximum speed we can set the fan to """
+
+        input_power = epsolar_reader.input_power()
+
+        if epsolar_reader.battery_soc() >= 45:
+            # Battery is pretty good, allow the fan to go pretty high
+            if input_power > 80:
+                return 88
+            return 80
+
+        # Battery is on the low-side
+        # Restrict based on the input power        
+
+        if input_power > 60:
+            return 75
+        if input_power > 50:
+            return 65
+        if input_power > 40:
+            return 60
+        if input_power > 30:
+            return 50
+        if input_power > 20:
+            return 40
+        if input_power > 10:
+            return 30
+
+        return 0
+
 
     def fwd(self):
         self._fwd.value = True
@@ -47,16 +81,16 @@ class Fan:
         self._bwd.value = False
 
     def clamp_speed(self, speed):
-        SpeedMin = 35
-        SpeedMax = 80
-        RangeMax = SpeedMax - SpeedMin
+        min_speed = 35
+        self.max_speed = self._determine_max_fan_speed()
+        RangeMax = self.max_speed - min_speed
 
         if speed < 1:
             return 0
 
         # Speed into our range
         speed = (speed * RangeMax) / 100
-        speed = speed + SpeedMin
+        speed = speed + min_speed
 
         return speed
 
@@ -64,6 +98,10 @@ class Fan:
         speed = self.clamp_speed(speed)
         if speed == self.speed:
             return
+
+        # Only allow the fan to up by this much at a time
+        MaxIncrease = 20
+        speed = min(speed, self.speed + MaxIncrease)
 
         if speed == 0:
             self.off()
@@ -120,17 +158,6 @@ class EpsolarReader(JsonReader):
             return default
 
         return result_data.get("value")
-
-    def low_power_mode(self):
-        """
-        Returns True if we should work in low-power mode
-        """
-        if self.battery_soc() > 30:
-            return False
-        if self.input_power() > 50:
-            return False
-
-        return True
 
     def battery_temperature(self):
         return self._get_value("BATTERY_TEMPERATURE", None)
@@ -196,15 +223,16 @@ class TempReader(JsonReader):
 
         # Sensor was updated recently and seems valid
         return sensor.get("temperature")
-
+  
 
 
 wiringpi.wiringPiSetupGpio()
 
-fan = Fan(board.D12, board.D16, 18)
 temp_reader = TempReader()
 weather_reader = WeatherReader()
 epsolar_reader = EpsolarReader()
+
+fan = Fan(board.D12, board.D16, 18, epsolar_reader)
 
 targetT = 26.6667
 P = 10
@@ -275,8 +303,8 @@ while 1:
 
 
     # Logging
-    print("Outside: %.2fC | Inside: %.2fC | Target: %.2fC | Fan: %s%% | Solar Elevation: %s%% | SOC %s%% | Input Power %sW | Equipment Power: %sW"
-        % (outside_temp, greenhouse_temp, pid.setpoint, target_pwm, str(elevation), battery_soc, input_power, equipment_power))
+    print("Outside: %.2fC | Inside: %.2fC | Target: %.2fC | Fan: %s%% | FanMax: %s%% | Solar Elevation: %s%% | SOC %s%% | Input Power %sW | Equipment Power: %sW"
+        % (outside_temp, greenhouse_temp, pid.setpoint, fan.speed, fan.max_speed, str(elevation), battery_soc, input_power, equipment_power))
 
     # Adjust the fan speed
     fan.set_speed(target_pwm)
